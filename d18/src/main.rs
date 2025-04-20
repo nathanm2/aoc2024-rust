@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::ops::Add;
+use std::ops::{Add, Sub};
 
 #[derive(Parser)]
 struct Cli {
@@ -27,10 +27,25 @@ fn main() -> Result<(), Box<(dyn Error + 'static)>> {
     let dim = parse_tuple(&cli.dimensions)?;
     let locs = parse_input(&cli.input, dim)?;
 
-    let bytes: HashSet<_> = locs[0..cli.count].iter().map(|x| *x).collect();
-    display(&bytes, dim);
+    let obstacles: HashSet<Vec2> = locs[0..cli.count].iter().map(|x| *x).collect();
+    let path = shortest_path(dim, &obstacles)?;
+    let pathset = path_set(&path);
+
+    display(dim, &obstacles, &pathset);
 
     Ok(())
+}
+
+fn shortest_path(dim: Vec2, bytes: &HashSet<Vec2>) -> Result<Option<Vec<Vec2>>, String> {
+    Ok(None)
+}
+
+fn path_set(path: &Option<Vec<Vec2>>) -> HashSet<Vec2> {
+    if let Some(x) = path {
+        x.iter().map(|x| *x).collect()
+    } else {
+        HashSet::new()
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -50,15 +65,30 @@ impl Add<Vec2> for Vec2 {
     }
 }
 
-fn display(bytes: &HashSet<Vec2>, dim: Vec2) {
+impl Sub<Vec2> for Vec2 {
+    type Output = Vec2;
+
+    fn sub(self, o: Vec2) -> Vec2 {
+        Vec2 {
+            x: self.x - o.x,
+            y: self.y - o.y,
+        }
+    }
+}
+
+fn display(dim: Vec2, bytes: &HashSet<Vec2>, pathset: &HashSet<Vec2>) {
     let cap = (dim.x + 1) * dim.y;
     let mut map = String::with_capacity(cap as usize);
     for y in 0..dim.y {
         for x in 0..dim.x {
-            let x = x as i32;
-            let y = y as i32;
-            let c = if bytes.contains(&Vec2 { x, y }) {
+            let pos = Vec2 {
+                x: x as i32,
+                y: y as i32,
+            };
+            let c = if bytes.contains(&pos) {
                 '#'
+            } else if pathset.contains(&pos) {
+                'O'
             } else {
                 '.'
             };
