@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use clap::Parser;
-use std::collections::HashSet;
+use std::collections::{BinaryHeap, HashSet};
 use std::error::Error;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -25,10 +25,17 @@ struct Cli {
 fn main() -> Result<(), Box<(dyn Error + 'static)>> {
     let cli = Cli::parse();
     let dim = parse_tuple(&cli.dimensions)?;
-    let locs = parse_input(&cli.input, dim)?;
+    let obstacles = parse_input(&cli.input, dim)?;
 
-    let obstacles: HashSet<Vec2> = locs[0..cli.count].iter().map(|x| *x).collect();
-    let path = shortest_path(dim, &obstacles)?;
+    let obstacles: HashSet<Vec2> = obstacles[0..cli.count].iter().map(|x| *x).collect();
+    let board = Board::new(dim, &obstacles);
+    let path = board.shortest_path(
+        Vec2 { x: 0, y: 0 },
+        Vec2 {
+            x: dim.x - 1,
+            y: dim.y - 1,
+        },
+    )?;
     let pathset = path_set(&path);
 
     display(dim, &obstacles, &pathset);
@@ -36,8 +43,35 @@ fn main() -> Result<(), Box<(dyn Error + 'static)>> {
     Ok(())
 }
 
-fn shortest_path(dim: Vec2, bytes: &HashSet<Vec2>) -> Result<Option<Vec<Vec2>>, String> {
-    Ok(None)
+struct Node {
+    pos: Vec2,
+    score: i32,
+    distance: i32,
+    parent: Option<Vec2>,
+}
+
+struct Board<'a> {
+    dim: Vec2,
+    bytes: &'a HashSet<Vec2>,
+}
+
+impl<'a> Board<'a> {
+    fn new(dim: Vec2, bytes: &'a HashSet<Vec2>) -> Board<'a> {
+        Board { dim, bytes }
+    }
+
+    fn shortest_path(&self, start: Vec2, end: Vec2) -> Result<Option<Vec<Vec2>>, String> {
+        let mut open = BinaryHeap::new();
+        let start = Node {
+            pos: start,
+            score: 0,
+            distance: (end - start).sum(),
+            parent: None,
+        };
+        open.push(start);
+
+        Ok(None)
+    }
 }
 
 fn path_set(path: &Option<Vec<Vec2>>) -> HashSet<Vec2> {
