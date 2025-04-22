@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::collections::HashSet;
 use std::env;
 use std::error::Error;
