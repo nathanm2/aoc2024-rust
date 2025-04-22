@@ -169,6 +169,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "d19"
+version = "0.1.0"
+dependencies = [
+ "clap",
+]
+
+[[package]]
 name = "d2"
 version = "0.1.0"
 
