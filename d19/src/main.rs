@@ -15,8 +15,7 @@ struct Cli {
 fn main() -> Result<(), Box<dyn Error + 'static>> {
     let cli = Cli::parse();
     let (towels, patterns) = parse_input(&cli.input)?;
-    println!("Towels: {:?}", towels);
-    println!("Patterns: {:?}", patterns);
+    let trie = build_trie(&towels);
 
     Ok(())
 }
@@ -47,6 +46,39 @@ impl TryFrom<char> for Stripe {
 
 #[derive(Debug)]
 struct Pattern(Vec<Stripe>);
+
+#[derive(Debug, Default)]
+struct TrieNode {
+    children: [Option<Box<TrieNode>>; 5], // One for each Stripe variant
+    is_end: bool,
+}
+
+impl TrieNode {
+    fn new() -> Self {
+        TrieNode {
+            children: Default::default(),
+            is_end: false,
+        }
+    }
+}
+
+fn build_trie(patterns: &[Pattern]) -> TrieNode {
+    let mut root = TrieNode::new();
+
+    for pattern in patterns {
+        let mut current = &mut root;
+        for &stripe in &pattern.0 {
+            let idx = stripe as usize;
+            if current.children[idx].is_none() {
+                current.children[idx] = Some(Box::new(TrieNode::new()));
+            }
+            current = current.children[idx].as_mut().unwrap();
+        }
+        current.is_end = true;
+    }
+
+    root
+}
 
 impl TryFrom<&str> for Pattern {
     type Error = &'static str;
