@@ -1,6 +1,3 @@
-#![allow(dead_code)]
-
-use bitvector::BitVector;
 use clap::Parser;
 use std::error::Error;
 use std::fmt;
@@ -20,143 +17,51 @@ fn main() -> Result<(), Box<dyn Error + 'static>> {
     let trie = build_trie(&towels);
 
     let mut count = 0;
+    let mut total_ways = 0;
     for pattern in &patterns {
-        let pm = PatternMatch::new(pattern, &trie);
-        if pm.check() {
-            println!("{} => match!", pattern);
+        let ways = ways(pattern, &trie);
+        println!("{} => {}", pattern, ways);
+        if ways > 0 {
             count += 1;
-        } else {
-            println!("{} => no match!", pattern);
+            total_ways += ways;
         }
     }
 
-    println!("Count: {}", count);
+    println!("\nCount: {}", count);
+    println!("Total Ways: {}", total_ways);
     Ok(())
 }
 
-fn check_result(pattern: &Pattern, offsets: &Vec<usize>, root: &TrieNode) -> Result<(), String> {
-    let mut pattern_offset = 0;
-    // println!("{:?}", offsets);
+fn ways(pattern: &Pattern, root: &TrieNode) -> usize {
+    let len = pattern.0.len();
+    let mut pos_ways = vec![0usize; len];
 
-    for offset in offsets {
-        let towel = Pattern(
-            pattern.0[pattern_offset..pattern_offset + offset]
-                .iter()
-                .map(|&s| s)
-                .collect::<Vec<Stripe>>(),
-        );
-
-        if !single_match(&towel, root) {
-            return Err(format!("Invalid towel: {}", towel));
-        }
-
-        print!("{} ", towel);
-        pattern_offset += offset;
+    for pos in (0..len).rev() {
+        let count = check_pos(pattern, root, pos, &pos_ways);
+        pos_ways[pos] = count;
     }
 
-    println!("");
-
-    Ok(())
+    pos_ways[0]
 }
 
-struct PatternMatch<'a> {
-    pattern: &'a Pattern,
-    root: &'a TrieNode,
-}
+fn check_pos(pattern: &Pattern, root: &TrieNode, start: usize, pos_ways: &Vec<usize>) -> usize {
+    let mut node = root;
+    let len = pattern.0.len();
+    let mut sum = 0;
 
-impl<'a> PatternMatch<'a> {
-    fn new(pattern: &'a Pattern, root: &'a TrieNode) -> PatternMatch<'a> {
-        PatternMatch { pattern, root }
-    }
-
-    fn check(&self) -> bool {
-        let len = self.pattern.0.len();
-        let mut matches = BitVector::new(len);
-        for pos in (0..len).rev() {
-            if self.check_pos(pos, &matches) {
-                matches.insert(pos);
+    for pos in start..len {
+        let idx = pattern.0[pos] as usize;
+        if let Some(next) = &node.children[idx].as_ref() {
+            if next.is_end && pos + 1 < len {
+                sum += pos_ways[pos + 1];
             }
-        }
-
-        matches.contains(0)
-    }
-
-    fn check_pos(&self, start: usize, matches: &BitVector) -> bool {
-        let mut cur_node = self.root;
-        let len = self.pattern.0.len();
-
-        for offset in start..len {
-            let idx = self.pattern.0[offset] as usize;
-            if let Some(next_node) = &cur_node.children[idx].as_ref() {
-                if next_node.is_end && offset + 1 < len && matches.contains(offset + 1) {
-                    return true;
-                } else {
-                    cur_node = next_node;
-                }
-            } else {
-                return false;
-            }
-        }
-
-        cur_node.is_end
-    }
-}
-
-fn single_match(pattern: &Pattern, root: &TrieNode) -> bool {
-    let mut current = root;
-
-    for &stripe in pattern.0.iter() {
-        let idx = stripe as usize;
-
-        if let Some(next) = &current.children[idx].as_ref() {
-            current = next;
+            node = next;
         } else {
-            return false;
+            return sum;
         }
     }
 
-    if current.is_end { true } else { false }
-}
-
-fn multi_match(pattern: &Pattern, root: &TrieNode) -> Option<Vec<usize>> {
-    if let Some(mut offsets) = pm_inner(&pattern.0, root, root) {
-        offsets.reverse();
-        Some(offsets)
-    } else {
-        None
-    }
-}
-
-fn pm_inner(pattern: &[Stripe], start: &TrieNode, root: &TrieNode) -> Option<Vec<usize>> {
-    let mut current = start;
-
-    for (offset, &stripe) in pattern.iter().enumerate() {
-        let idx = stripe as usize;
-
-        if let Some(next) = &current.children[idx].as_ref() {
-            if next.is_end {
-                if let Some(mut m) = pm_inner(&pattern[offset + 1..], next, root) {
-                    let child_offset = m.pop().unwrap_or(0);
-                    m.push(offset + 1 + child_offset);
-                    return Some(m);
-                } else if let Some(mut m) = pm_inner(&pattern[offset + 1..], root, root) {
-                    m.push(offset + 1);
-                    return Some(m);
-                } else {
-                    return None;
-                }
-            }
-            current = next;
-        } else {
-            return None;
-        }
-    }
-
-    if current.is_end {
-        Some(Vec::new())
-    } else {
-        None
-    }
+    sum + if node.is_end { 1 } else { 0 }
 }
 
 #[derive(Debug, Clone, Copy)]
