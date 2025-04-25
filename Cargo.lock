@@ -62,6 +62,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "bitvector"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4de5fdcad0b12d843c0b535976ba5f5110ecde436161a7f3cda255674cfc28cb"
+
+[[package]]
 name = "clap"
 version = "4.5.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -172,6 +178,7 @@ dependencies = [
 name = "d19"
 version = "0.1.0"
 dependencies = [
+ "bitvector",
  "clap",
 ]
 
