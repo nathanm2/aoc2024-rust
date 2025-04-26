@@ -14,8 +14,13 @@ struct Cli {
     #[arg(short, long, value_name = "INPUT")]
     input: String,
 
+    /// Minimum cheat savings
     #[arg(short, long)]
-    threshold: usize,
+    threshold: i32,
+
+    /// Cheat duration
+    #[arg(short, long)]
+    duration: i32,
 }
 
 fn main() -> Result<(), Box<(dyn Error + 'static)>> {
@@ -24,8 +29,8 @@ fn main() -> Result<(), Box<(dyn Error + 'static)>> {
     let steps = maze.run();
 
     maze.display(Some(&steps));
-    let shortcuts = maze.collect_shortcuts(&steps);
-    let count = analyze_shortcuts(&shortcuts, cli.threshold);
+    let savings = maze.cheat_savings_freq(&steps, cli.duration);
+    let count = analyze_shortcuts(&savings, cli.threshold);
 
     println!("Original Time: {}", steps.get(&maze.end).unwrap());
     println!("Shortcut Count: {}", count);
@@ -33,14 +38,13 @@ fn main() -> Result<(), Box<(dyn Error + 'static)>> {
     Ok(())
 }
 
-fn analyze_shortcuts(savings: &HashMap<Vec2, usize>, threshold: usize) -> usize {
+fn analyze_shortcuts(freq: &HashMap<i32, i32>, threshold: i32) -> i32 {
     let mut total = 0;
-    let freq = savings_frequencies(&savings);
     let mut keys = freq
         .keys()
         .filter(|&&x| x >= threshold)
         .map(|&x| x)
-        .collect::<Vec<usize>>();
+        .collect::<Vec<i32>>();
     keys.sort();
     for saving in keys {
         let count = freq.get(&saving).unwrap();
@@ -50,40 +54,49 @@ fn analyze_shortcuts(savings: &HashMap<Vec2, usize>, threshold: usize) -> usize 
     total
 }
 
-fn savings_frequencies(values: &HashMap<Vec2, usize>) -> HashMap<usize, usize> {
-    let mut frequencies = HashMap::new();
-    let mut best = 0;
-    let mut best_pos = Vec2 { x: 0, y: 0 };
-    for (&pos, &value) in values.iter() {
-        *frequencies.entry(value).or_insert(0) += 1;
-        if value > best {
-            best = value;
-            best_pos = pos;
+fn find_cheats(start: Vec2, steps: &HashMap<Vec2, i32>, dur: i32, savings: &mut HashMap<i32, i32>) {
+    if let Some(&start_steps) = steps.get(&start) {
+        for x in -dur..=dur {
+            for y in -dur..=dur {
+                let end = start
+                    + Vec2 {
+                        x: x as i32,
+                        y: y as i32,
+                    };
+                let distance = start.distance(end);
+                if distance > dur {
+                    continue;
+                }
+
+                if let Some(&end_steps) = steps.get(&end) {
+                    let saving = end_steps - start_steps - distance;
+                    if saving > 0 {
+                        *savings.entry(saving).or_insert(0) += 1;
+                    }
+                }
+            }
         }
     }
-
-    println!("Best Savings: {}, {}", best, best_pos);
-
-    frequencies
 }
 
 struct Maze {
     maze: Vec<Vec<Space>>,
-    width: usize,
-    height: usize,
+    width: i32,
+    height: i32,
     start: Vec2,
     end: Vec2,
 }
 
 impl Maze {
     fn get(&self, pos: Vec2) -> Option<Space> {
-        let x = pos.x as usize;
-        let y = pos.y as usize;
+        let x = pos.x;
+        let y = pos.y;
 
-        (pos.x >= 0 && x < self.width && pos.y >= 0 && y < self.height).then(|| self.maze[y][x])
+        (x >= 0 && x < self.width && y >= 0 && y < self.height)
+            .then(|| self.maze[y as usize][x as usize])
     }
 
-    fn run(&self) -> HashMap<Vec2, usize> {
+    fn run(&self) -> HashMap<Vec2, i32> {
         let mut cur = self.start;
         let mut visited = HashMap::new();
         let mut steps = 0;
@@ -98,7 +111,7 @@ impl Maze {
         visited
     }
 
-    fn next(&self, cur: Vec2, visited: &HashMap<Vec2, usize>) -> Option<Vec2> {
+    fn next(&self, cur: Vec2, visited: &HashMap<Vec2, i32>) -> Option<Vec2> {
         let mut result = None;
         for (x, y) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
             let next = Vec2 { x, y } + cur;
@@ -115,17 +128,14 @@ impl Maze {
         result
     }
 
-    fn display(&self, visited: Option<&HashMap<Vec2, usize>>) {
-        let mut s = String::with_capacity(self.width + 1 * self.height);
+    fn display(&self, visited: Option<&HashMap<Vec2, i32>>) {
+        let mut s = String::with_capacity((self.width + 1 * self.height) as usize);
 
         for y in 0..self.height {
             for x in 0..self.width {
-                let v = Vec2 {
-                    x: x as i32,
-                    y: y as i32,
-                };
+                let v = Vec2 { x, y };
 
-                let mut ch = self.maze[y][x].into();
+                let mut ch = self.maze[y as usize][x as usize].into();
 
                 if let Some(m) = visited {
                     if let Some(value) = m.get(&v) {
@@ -141,47 +151,24 @@ impl Maze {
         print!("{}", s);
     }
 
-    fn collect_shortcuts(&self, visited: &HashMap<Vec2, usize>) -> HashMap<Vec2, usize> {
+    fn cheat_savings_freq(
+        &self,
+        steps: &HashMap<Vec2, i32>,
+        cheat_duration: i32,
+    ) -> HashMap<i32, i32> {
         let mut savings = HashMap::new();
 
-        // Check all wall positions for potential shortcuts
         for y in 1..self.height - 1 {
             for x in 1..self.width - 1 {
                 let pos = Vec2 {
                     x: x as i32,
                     y: y as i32,
                 };
-                if Space::Wall == self.get(pos).unwrap() {
-                    if let Some(saving) = self.calculate_wall_savings(pos, visited) {
-                        savings.insert(pos, saving);
-                    }
-                }
+                find_cheats(pos, steps, cheat_duration, &mut savings);
             }
         }
+
         savings
-    }
-
-    fn calculate_wall_savings(
-        &self,
-        wall_pos: Vec2,
-        visited: &HashMap<Vec2, usize>,
-    ) -> Option<usize> {
-        // Check both horizontal and vertical pairs of adjacent positions
-        let directions = [
-            (Vec2 { x: -1, y: 0 }, Vec2 { x: 1, y: 0 }), // horizontal
-            (Vec2 { x: 0, y: -1 }, Vec2 { x: 0, y: 1 }), // vertical
-        ];
-
-        for (dir1, dir2) in directions {
-            let pos1 = wall_pos + dir1;
-            let pos2 = wall_pos + dir2;
-
-            if let (Some(&steps1), Some(&steps2)) = (visited.get(&pos1), visited.get(&pos2)) {
-                let savings = steps1.abs_diff(steps2) - 2;
-                return Some(savings);
-            }
-        }
-        None
     }
 }
 
@@ -208,6 +195,13 @@ impl From<Space> for char {
 struct Vec2 {
     x: i32,
     y: i32,
+}
+
+impl Vec2 {
+    fn distance(&self, other: Vec2) -> i32 {
+        let tmp = *self - other;
+        tmp.x.abs() + tmp.y.abs()
+    }
 }
 
 impl Add<Vec2> for Vec2 {
@@ -261,8 +255,8 @@ fn parse_maze_file(path: &String) -> Result<Maze, Box<dyn Error>> {
         maze.push(row);
     }
 
-    let width = maze[0].len();
-    let height = maze.len();
+    let width = maze[0].len() as i32;
+    let height = maze.len() as i32;
 
     Ok(Maze {
         maze,
