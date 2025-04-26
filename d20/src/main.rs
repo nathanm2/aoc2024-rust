@@ -13,6 +13,9 @@ struct Cli {
     /// Input file
     #[arg(short, long, value_name = "INPUT")]
     input: String,
+
+    #[arg(short, long)]
+    threshold: usize,
 }
 
 fn main() -> Result<(), Box<(dyn Error + 'static)>> {
@@ -21,23 +24,46 @@ fn main() -> Result<(), Box<(dyn Error + 'static)>> {
     let steps = maze.run();
 
     maze.display(Some(&steps));
-    let savings = maze.collect_shortcuts(&steps);
-    display_savings(&savings);
+    let shortcuts = maze.collect_shortcuts(&steps);
+    let count = analyze_shortcuts(&shortcuts, cli.threshold);
 
-    println!("Time: {}", steps.get(&maze.end).unwrap());
+    println!("Original Time: {}", steps.get(&maze.end).unwrap());
+    println!("Shortcut Count: {}", count);
 
     Ok(())
 }
 
-fn display_savings(savings: &HashMap<Vec2, Option<usize>>) {
-    let mut freq = savings_frequencies(&savings);
+fn analyze_shortcuts(savings: &HashMap<Vec2, usize>, threshold: usize) -> usize {
+    let mut total = 0;
+    let freq = savings_frequencies(&savings);
+    let mut keys = freq
+        .keys()
+        .filter(|&&x| x >= threshold)
+        .map(|&x| x)
+        .collect::<Vec<usize>>();
+    keys.sort();
+    for saving in keys {
+        let count = freq.get(&saving).unwrap();
+        println!("{} cheats that save {} picoseconds", count, saving);
+        total += count;
+    }
+    total
 }
 
-fn savings_frequencies(values: &HashMap<Vec2, Option<usize>>) -> HashMap<usize, usize> {
+fn savings_frequencies(values: &HashMap<Vec2, usize>) -> HashMap<usize, usize> {
     let mut frequencies = HashMap::new();
-    for &value in values.values().filter(|x| x.is_some()) {
-        *frequencies.entry(value.unwrap()).or_insert(0) += 1;
+    let mut best = 0;
+    let mut best_pos = Vec2 { x: 0, y: 0 };
+    for (&pos, &value) in values.iter() {
+        *frequencies.entry(value).or_insert(0) += 1;
+        if value > best {
+            best = value;
+            best_pos = pos;
+        }
     }
+
+    println!("Best Savings: {}, {}", best, best_pos);
+
     frequencies
 }
 
@@ -115,8 +141,8 @@ impl Maze {
         print!("{}", s);
     }
 
-    fn collect_shortcuts(&self, visited: &HashMap<Vec2, usize>) -> HashMap<Vec2, Option<usize>> {
-        let mut cheats = HashMap::new();
+    fn collect_shortcuts(&self, visited: &HashMap<Vec2, usize>) -> HashMap<Vec2, usize> {
+        let mut savings = HashMap::new();
 
         // Check all wall positions for potential shortcuts
         for y in 1..self.height - 1 {
@@ -126,11 +152,13 @@ impl Maze {
                     y: y as i32,
                 };
                 if Space::Wall == self.get(pos).unwrap() {
-                    cheats.insert(pos, self.calculate_wall_savings(pos, visited));
+                    if let Some(saving) = self.calculate_wall_savings(pos, visited) {
+                        savings.insert(pos, saving);
+                    }
                 }
             }
         }
-        cheats
+        savings
     }
 
     fn calculate_wall_savings(
