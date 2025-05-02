@@ -11,6 +11,10 @@ struct Cli {
     /// Input file
     #[arg(short, long, value_name = "INPUT")]
     input: String,
+
+    /// Key sequence
+    #[arg(short, long)]
+    keys: Option<String>,
 }
 
 fn main() -> Result<(), Box<(dyn Error + 'static)>> {
@@ -18,6 +22,16 @@ fn main() -> Result<(), Box<(dyn Error + 'static)>> {
     let input = parse_input(&cli.input)?;
     for line in input {
         println!("{}", line);
+    }
+
+    if let Some(v) = cli.keys {
+        let doors = Doors::new();
+        let ops = v
+            .chars()
+            .map(|c| DirKey::try_from(c))
+            .collect::<Result<Vec<_>, _>>()?;
+        let results = run(&doors, ops)?;
+        println!("{}", keys_to_string(&results));
     }
 
     Ok(())
@@ -50,10 +64,9 @@ fn run(doors: &Doors, mut ops: Vec<DirKey>) -> Result<Vec<NumKey>, Box<(dyn Erro
     for door in doors.doors {
         ops = match door {
             Door::DirPad(np) => np.run(&ops)?.0,
-            Door::NumPad(dp) => {
-                return Ok(dp.run(&ops)?.0);
-            }
-        }
+            Door::NumPad(dp) => return Ok(dp.run(&ops)?.0),
+        };
+        println!("{}", keys_to_string(&ops));
     }
     Err(format!("No num pad"))?
 }
@@ -84,29 +97,19 @@ trait KeyPad: Sized + Into<Vec2> + fmt::Display + Copy {
 
         for op in ops {
             match op {
-                DirKey::N => {
+                DirKey::N | DirKey::E | DirKey::S | DirKey::W => {
+                    let dir = match op {
+                        DirKey::N => Vec2 { x: 0, y: -1 },
+                        DirKey::E => Vec2 { x: 1, y: 0 },
+                        DirKey::S => Vec2 { x: 0, y: 1 },
+                        DirKey::W => Vec2 { x: -1, y: 0 },
+                        _ => unreachable!(),
+                    };
                     cur = cur
-                        .mv(Vec2 { x: 0, y: -1 })
+                        .mv(dir)
                         .ok_or_else(|| format!("Bad {} move: {}", op, cur))?;
                 }
-                DirKey::E => {
-                    cur = cur
-                        .mv(Vec2 { x: 1, y: 0 })
-                        .ok_or_else(|| format!("Bad {} move: {}", op, cur))?;
-                }
-                DirKey::S => {
-                    cur = cur
-                        .mv(Vec2 { x: 0, y: 1 })
-                        .ok_or_else(|| format!("Bad {} move: {}", op, cur))?;
-                }
-                DirKey::W => {
-                    cur = cur
-                        .mv(Vec2 { x: -1, y: 0 })
-                        .ok_or_else(|| format!("Bad {} move: {}", op, cur))?;
-                }
-                DirKey::A => {
-                    output.push(cur);
-                }
+                DirKey::A => output.push(cur),
                 DirKey::Gap => Err(format!("Can't run Gap"))?,
             }
         }
@@ -141,40 +144,25 @@ impl From<NumKey> for Vec2 {
 
 impl KeyPad for NumKey {
     fn mv(&self, delta: Vec2) -> Option<Self> {
-        match Vec2::from(*self) + delta {
-            Vec2 { x: 0, y: 0 } => Some(NumKey::N7),
-            Vec2 { x: 1, y: 0 } => Some(NumKey::N8),
-            Vec2 { x: 2, y: 0 } => Some(NumKey::N9),
-            Vec2 { x: 0, y: 1 } => Some(NumKey::N4),
-            Vec2 { x: 1, y: 1 } => Some(NumKey::N5),
-            Vec2 { x: 2, y: 1 } => Some(NumKey::N6),
-            Vec2 { x: 0, y: 2 } => Some(NumKey::N1),
-            Vec2 { x: 1, y: 2 } => Some(NumKey::N2),
-            Vec2 { x: 2, y: 2 } => Some(NumKey::N3),
-            Vec2 { x: 1, y: 3 } => Some(NumKey::N0),
-            Vec2 { x: 2, y: 3 } => Some(NumKey::A),
-            _ => None,
+        const NUM_KEYS: [[Option<NumKey>; 3]; 4] = [
+            [Some(NumKey::N7), Some(NumKey::N8), Some(NumKey::N9)],
+            [Some(NumKey::N4), Some(NumKey::N5), Some(NumKey::N6)],
+            [Some(NumKey::N1), Some(NumKey::N2), Some(NumKey::N3)],
+            [None, Some(NumKey::N0), Some(NumKey::A)],
+        ];
+        let pos = Vec2::from(*self) + delta;
+        if pos.x >= 0 && pos.x < 3 && pos.y >= 0 && pos.y < 4 {
+            NUM_KEYS[pos.y as usize][pos.x as usize]
+        } else {
+            None
         }
     }
 }
 
 impl fmt::Display for NumKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let ch = match self {
-            NumKey::N7 => '7',
-            NumKey::N8 => '8',
-            NumKey::N9 => '9',
-            NumKey::N4 => '4',
-            NumKey::N5 => '5',
-            NumKey::N6 => '6',
-            NumKey::N1 => '1',
-            NumKey::N2 => '2',
-            NumKey::N3 => '3',
-            NumKey::Gap => ' ',
-            NumKey::N0 => '0',
-            NumKey::A => 'A',
-        };
-        write!(f, "{}", ch)
+        const CHARS: [char; 12] = ['7', '8', '9', '4', '5', '6', '1', '2', '3', ' ', '0', 'A'];
+        write!(f, "{}", CHARS[*self as usize])
     }
 }
 
@@ -198,32 +186,45 @@ impl From<DirKey> for Vec2 {
 
 impl KeyPad for DirKey {
     fn mv(&self, delta: Vec2) -> Option<Self> {
-        match Vec2::from(*self) + delta {
-            Vec2 { x: 1, y: 0 } => Some(DirKey::N),
-            Vec2 { x: 2, y: 0 } => Some(DirKey::A),
-            Vec2 { x: 0, y: 1 } => Some(DirKey::W),
-            Vec2 { x: 1, y: 1 } => Some(DirKey::S),
-            Vec2 { x: 2, y: 1 } => Some(DirKey::E),
-            _ => None,
+        const DIR_KEYS: [[Option<DirKey>; 3]; 2] = [
+            [None, Some(DirKey::N), Some(DirKey::A)],
+            [Some(DirKey::W), Some(DirKey::S), Some(DirKey::E)],
+        ];
+        let pos = Vec2::from(*self) + delta;
+        if pos.x >= 0 && pos.x < 3 && pos.y >= 0 && pos.y < 2 {
+            DIR_KEYS[pos.y as usize][pos.x as usize]
+        } else {
+            None
         }
     }
 }
 
 impl fmt::Display for DirKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let ch = match self {
-            DirKey::Gap => ' ',
-            DirKey::N => '^',
-            DirKey::A => 'A',
-            DirKey::W => '<',
-            DirKey::S => 'v',
-            DirKey::E => '>',
-        };
-        write!(f, "{}", ch)
+        const CHARS: [char; 6] = [' ', '^', 'A', '<', 'v', '>'];
+        write!(f, "{}", CHARS[*self as usize])
+    }
+}
+
+impl TryFrom<char> for DirKey {
+    type Error = String;
+    fn try_from(ch: char) -> Result<Self, Self::Error> {
+        match ch {
+            '^' => Ok(DirKey::N),
+            '>' => Ok(DirKey::E),
+            'v' => Ok(DirKey::S),
+            '<' => Ok(DirKey::W),
+            'A' => Ok(DirKey::A),
+            _ => Err(format!("Unrecognized DirKey: {}", ch)),
+        }
     }
 }
 
 fn parse_input(path: &String) -> Result<Vec<String>, Box<dyn Error>> {
     let tmp = fs::read_to_string(path)?;
     Ok(tmp.trim().split("\n").map(|s| s.into()).collect())
+}
+
+fn keys_to_string<T: fmt::Display>(keys: &[T]) -> String {
+    keys.iter().map(|k| k.to_string()).collect()
 }
