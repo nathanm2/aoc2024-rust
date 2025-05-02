@@ -63,8 +63,8 @@ impl Doors {
 fn run(doors: &Doors, mut ops: Vec<DirKey>) -> Result<Vec<NumKey>, Box<(dyn Error)>> {
     for door in doors.doors {
         ops = match door {
-            Door::DirPad(np) => np.run(&ops)?.0,
-            Door::NumPad(dp) => return Ok(dp.run(&ops)?.0),
+            Door::DirPad(dp) => dp.run(&ops)?.0,
+            Door::NumPad(np) => return Ok(np.run(&ops)?.0),
         };
         println!("{}", keys_to_string(&ops));
     }
