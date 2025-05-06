@@ -4,7 +4,7 @@ use clap::Parser;
 use std::error::Error;
 use std::fmt;
 use std::fs;
-use std::ops::Add;
+use std::ops::{Add, Sub};
 
 #[derive(Parser)]
 struct Cli {
@@ -88,6 +88,17 @@ impl Add<Vec2> for Vec2 {
     }
 }
 
+impl Sub<Vec2> for Vec2 {
+    type Output = Vec2;
+
+    fn sub(self, o: Vec2) -> Vec2 {
+        Vec2 {
+            x: self.x - o.x,
+            y: self.y - o.y,
+        }
+    }
+}
+
 trait KeyPad: Sized + Into<Vec2> + fmt::Display + Copy {
     fn mv(&self, dir: Vec2) -> Option<Self>;
 
@@ -118,7 +129,7 @@ trait KeyPad: Sized + Into<Vec2> + fmt::Display + Copy {
     }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 enum NumKey {
     N7 = 0,
     N8 = 1,
@@ -131,7 +142,6 @@ enum NumKey {
     N3 = 8,
     Gap = 9,
     N0 = 10,
-    #[default]
     A = 11,
 }
 
@@ -166,11 +176,10 @@ impl fmt::Display for NumKey {
     }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 enum DirKey {
     Gap = 0,
     N = 1,
-    #[default]
     A = 2,
     W = 3,
     S = 4,
@@ -216,6 +225,26 @@ impl TryFrom<char> for DirKey {
             '<' => Ok(DirKey::W),
             'A' => Ok(DirKey::A),
             _ => Err(format!("Unrecognized DirKey: {}", ch)),
+        }
+    }
+}
+
+impl TryFrom<char> for NumKey {
+    type Error = String;
+    fn try_from(ch: char) -> Result<Self, Self::Error> {
+        match ch {
+            '0' => Ok(NumKey::N0),
+            '1' => Ok(NumKey::N1),
+            '2' => Ok(NumKey::N2),
+            '3' => Ok(NumKey::N3),
+            '4' => Ok(NumKey::N4),
+            '5' => Ok(NumKey::N5),
+            '6' => Ok(NumKey::N6),
+            '7' => Ok(NumKey::N7),
+            '8' => Ok(NumKey::N8),
+            '9' => Ok(NumKey::N9),
+            'A' => Ok(NumKey::A),
+            _ => Err(format!("Unrecognized NumKey: {}", ch)),
         }
     }
 }
