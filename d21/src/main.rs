@@ -38,37 +38,123 @@ fn main() -> Result<(), Box<(dyn Error + 'static)>> {
 }
 
 #[derive(Copy, Clone)]
-enum Door {
-    NumPad(NumKey),
-    DirPad(DirKey),
-}
-
-#[derive(Copy, Clone)]
 struct Doors {
-    doors: [Door; 3],
+    numpad: NumKey,
+    dirpads: [DirKey; 2],
 }
 
 impl Doors {
     fn new() -> Doors {
         Doors {
-            doors: [
-                Door::DirPad(DirKey::A),
-                Door::DirPad(DirKey::A),
-                Door::NumPad(NumKey::A),
-            ],
+            numpad: NumKey::default(),
+            dirpads: [DirKey::default(); 2],
         }
     }
 }
 
 fn run(doors: &Doors, mut ops: Vec<DirKey>) -> Result<Vec<NumKey>, Box<(dyn Error)>> {
-    for door in doors.doors {
-        ops = match door {
-            Door::DirPad(dp) => dp.run(&ops)?.0,
-            Door::NumPad(np) => return Ok(np.run(&ops)?.0),
-        };
+    for dirpad in doors.dirpads {
+        ops = dirpad.run(&ops)?.0;
         println!("{}", keys_to_string(&ops));
     }
-    Err(format!("No num pad"))?
+
+    Ok(doors.numpad.run(&ops)?.0)
+}
+
+struct DirKeyOp {
+    key: DirKey,
+    count: usize,
+}
+
+fn finger_paths<T: KeyPad + Into<Vec2>>(start: T, end: T) -> Vec<Vec<DirKeyOp>> {
+    let delta = end.into() - start.into();
+    let (xkey, ykey) = get_direction_keys(&delta);
+    let (xcount, ycount) = (delta.x.abs() as usize, delta.y.abs() as usize);
+
+    let mut results = Vec::new();
+    let xvec = Vec2 { x: delta.x, y: 0 };
+    let yvec = Vec2 { x: 0, y: delta.y };
+
+    if xcount > 0 && start.mv(xvec).is_some() {
+        results.push(add_path(xkey, xcount, ykey, ycount));
+    }
+    if ycount > 0 && start.mv(yvec).is_some() {
+        results.push(add_path(ykey, ycount, xkey, xcount));
+    }
+    results
+}
+
+fn add_path(
+    first_key: DirKey,
+    first_count: usize,
+    second_key: DirKey,
+    second_count: usize,
+) -> Vec<DirKeyOp> {
+    let mut path = vec![DirKeyOp {
+        key: first_key,
+        count: first_count,
+    }];
+    if second_count > 0 {
+        path.push(DirKeyOp {
+            key: second_key,
+            count: second_count,
+        });
+    }
+    path
+}
+
+fn get_direction_keys(delta: &Vec2) -> (DirKey, DirKey) {
+    let xkey = if delta.x < 0 { DirKey::W } else { DirKey::E };
+    let ykey = if delta.y < 0 { DirKey::N } else { DirKey::S };
+    (xkey, ykey)
+}
+
+fn gen_input(
+    output: DirKey,
+    count: usize,
+    start: DirKey,
+    parents: &[DirKey],
+) -> (Vec<DirKey>, Vec<DirKey>) {
+    let mut best_ops: Option<Vec<DirKey>> = None;
+    let mut best_state = None;
+
+    for path in finger_paths(start, output) {
+        let mut ops = Vec::new();
+        let mut parents = parents.to_vec();
+
+        // Move the finger to the output:
+        for dir_op in path {
+            if parents.len() != 0 {
+                let (o, p) = gen_input(dir_op.key, dir_op.count, parents[0], &parents[1..]);
+                ops.extend(o);
+                parents = p;
+            } else {
+                ops.extend(vec![dir_op.key; dir_op.count]);
+            }
+        }
+
+        // Press the output button:
+        if parents.len() != 0 {
+            let (o, p) = gen_input(DirKey::A, count, parents[0], &parents[1..]);
+            ops.extend(o);
+            parents = p;
+        } else {
+            ops.extend(vec![DirKey::A; count]);
+            return (ops, vec![output]);
+        }
+
+        if let Some(bo) = best_ops {
+            if bo.len() > ops.len() {
+                best_ops = Some(ops);
+                best_state = Some(parents);
+            } else {
+                best_ops = Some(ops);
+                best_state = Some(parents);
+            }
+        }
+    }
+
+    (best_ops.unwrap(), best_state.unwrap())
 }
 
 #[derive(Copy, Clone)]
@@ -96,6 +182,14 @@ impl Sub<Vec2> for Vec2 {
             x: self.x - o.x,
             y: self.y - o.y,
         }
+    }
+}
+
+impl Vec2 {
+    fn dirs(&self) -> (DirKey, usize, DirKey, usize) {
+        let xdir = if self.x < 0 { DirKey::W } else { DirKey::E };
+        let ydir = if self.y < 0 { DirKey::N } else { DirKey::S };
+        (xdir, self.x.abs() as usize, ydir, self.y.abs() as usize)
     }
 }
 
@@ -129,7 +223,7 @@ trait KeyPad: Sized + Into<Vec2> + fmt::Display + Copy {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 enum NumKey {
     N7 = 0,
     N8 = 1,
@@ -142,6 +236,7 @@ enum NumKey {
     N3 = 8,
     Gap = 9,
     N0 = 10,
+    #[default]
     A = 11,
 }
 
@@ -176,10 +271,11 @@ impl fmt::Display for NumKey {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 enum DirKey {
     Gap = 0,
     N = 1,
+    #[default]
     A = 2,
     W = 3,
     S = 4,
