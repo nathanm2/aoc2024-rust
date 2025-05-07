@@ -10,31 +10,54 @@ use std::ops::{Add, Sub};
 struct Cli {
     /// Input file
     #[arg(short, long, value_name = "INPUT")]
-    input: String,
+    input: Option<String>,
+
+    /// Output
+    #[arg(short, long)]
+    output: Option<String>,
 
     /// Key sequence
-    #[arg(short, long)]
-    keys: Option<String>,
+    #[arg(long)]
+    ops: Option<String>,
 }
 
 fn main() -> Result<(), Box<(dyn Error + 'static)>> {
     let cli = Cli::parse();
-    let input = parse_input(&cli.input)?;
-    for line in input {
-        println!("{}", line);
+
+    if let Some(path) = cli.input {
+        let mut sum = 0;
+        for line in parse_input(&path)? {
+            sum += process_line(&line)?;
+        }
+        println!("Total Complexity: {}", sum);
     }
 
-    if let Some(v) = cli.keys {
-        let doors = Doors::new();
-        let ops = v
-            .chars()
-            .map(|c| DirKey::try_from(c))
-            .collect::<Result<Vec<_>, _>>()?;
-        let results = run(&doors, ops)?;
+    if let Some(output) = cli.output {
+        process_line(&output)?;
+    }
+
+    if let Some(ops) = cli.ops {
+        let ops = string_to_keys(&ops)?;
+        let results = Doors::run(ops)?;
         println!("{}", keys_to_string(&results));
     }
 
     Ok(())
+}
+
+fn process_line(line: &String) -> Result<usize, Box<dyn Error>> {
+    let num: usize = line[0..line.len() - 1].parse()?;
+    let outputs: Vec<NumKey> = string_to_keys(&line)?;
+    let inputs = Doors::derive(outputs);
+    let complexity = num * inputs.len();
+    println!(
+        "{}  {} x {} = {}",
+        keys_to_string(&inputs),
+        inputs.len(),
+        num,
+        complexity
+    );
+    Ok(complexity)
 }
 
 #[derive(Copy, Clone)]
@@ -46,19 +69,31 @@ struct Doors {
 impl Doors {
     fn new() -> Doors {
         Doors {
-            numpad: NumKey::default(),
-            dirpads: [DirKey::default(); 2],
+            numpad: NumKey::A,
+            dirpads: [DirKey::A; 2],
         }
     }
-}
 
-fn run(doors: &Doors, mut ops: Vec<DirKey>) -> Result<Vec<NumKey>, Box<(dyn Error)>> {
-    for dirpad in doors.dirpads {
-        ops = dirpad.run(&ops)?.0;
-        println!("{}", keys_to_string(&ops));
+    fn derive(outputs: Vec<NumKey>) -> Vec<DirKey> {
+        let mut doors = Doors::new();
+        let mut result = Vec::new();
+        for output in outputs {
+            let r = gen_input(output, 1, doors.numpad, &mut doors.dirpads);
+            result.extend(r);
+            doors.numpad = output;
+        }
+
+        result
     }
 
-    Ok(doors.numpad.run(&ops)?.0)
+    fn run(mut ops: Vec<DirKey>) -> Result<Vec<NumKey>, Box<(dyn Error)>> {
+        let doors = Doors::new();
+        for dirpad in doors.dirpads {
+            ops = dirpad.run(&ops)?.0;
+            println!("{}", keys_to_string(&ops));
+        }
+        Ok(doors.numpad.run(&ops)?.0)
+    }
 }
 
 struct DirKeyOp {
@@ -66,7 +101,7 @@ struct DirKeyOp {
     count: usize,
 }
 
-fn finger_paths<T: KeyPad + Into<Vec2>>(start: T, end: T) -> Vec<Vec<DirKeyOp>> {
+fn get_plans<T: KeyPad>(start: T, end: T, count: usize) -> Vec<Vec<DirKeyOp>> {
     let delta = end.into() - start.into();
     let (xkey, ykey) = get_direction_keys(&delta);
     let (xcount, ycount) = (delta.x.abs() as usize, delta.y.abs() as usize);
@@ -76,10 +111,10 @@ fn finger_paths<T: KeyPad + Into<Vec2>>(start: T, end: T) -> Vec<Vec<DirKeyOp>> 
     let yvec = Vec2 { x: 0, y: delta.y };
 
     if xcount > 0 && start.mv(xvec).is_some() {
-        results.push(add_path(xkey, xcount, ykey, ycount));
+        results.push(add_path(xkey, xcount, ykey, ycount, count));
     }
     if ycount > 0 && start.mv(yvec).is_some() {
-        results.push(add_path(ykey, ycount, xkey, xcount));
+        results.push(add_path(ykey, ycount, xkey, xcount, count));
     }
     results
 }
@@ -89,6 +124,7 @@ fn add_path(
     first_count: usize,
     second_key: DirKey,
     second_count: usize,
+    a_count: usize,
 ) -> Vec<DirKeyOp> {
     let mut path = vec![DirKeyOp {
         key: first_key,
@@ -100,6 +136,11 @@ fn add_path(
             count: second_count,
         });
     }
+    path.push(DirKeyOp {
+        key: DirKey::A,
+        count: a_count,
+    });
+
     path
 }
 
@@ -109,52 +150,45 @@ fn get_direction_keys(delta: &Vec2) -> (DirKey, DirKey) {
     (xkey, ykey)
 }
 
-fn gen_input(
-    output: DirKey,
-    count: usize,
-    start: DirKey,
-    parents: &[DirKey],
-) -> (Vec<DirKey>, Vec<DirKey>) {
-    let mut best_ops: Option<Vec<DirKey>> = None;
-    let mut best_state = None;
+fn gen_input<T>(output: T, count: usize, start: T, parents: &mut [DirKey]) -> Vec<DirKey>
+where
+    T: KeyPad,
+{
+    let mut shortest: Option<Vec<DirKey>> = None;
 
-    for path in finger_paths(start, output) {
+    // Find the "plan" that generates the shortest input sequence:
+    for plan in get_plans(start, output, count) {
         let mut ops = Vec::new();
-        let mut parents = parents.to_vec();
+        let mut pvec = parents.to_vec();
+        let plen = parents.len();
 
-        // Move the finger to the output:
-        for dir_op in path {
-            if parents.len() != 0 {
-                let (o, p) = gen_input(dir_op.key, dir_op.count, parents[0], &parents[1..]);
+        // Find the inputs:
+        for op in plan {
+            if plen != 0 {
+                let o = gen_input(op.key, op.count, pvec[plen - 1], &mut pvec[0..plen - 1]);
                 ops.extend(o);
-                parents = p;
+                pvec[plen - 1] = op.key;
             } else {
-                ops.extend(vec![dir_op.key; dir_op.count]);
+                ops.extend(vec![op.key; op.count]);
             }
         }
 
-        // Press the output button:
-        if parents.len() != 0 {
-            let (o, p) = gen_input(DirKey::A, count, parents[0], &parents[1..]);
-            ops.extend(o);
-            parents = p;
+        if plen == 0 {
+            return ops;
+        }
+
+        if let Some(ref s) = shortest {
+            if s.len() > ops.len() {
+                shortest = Some(ops);
+                parents.copy_from_slice(&pvec);
+            }
         } else {
-            ops.extend(vec![DirKey::A; count]);
-            return (ops, vec![output]);
-        }
-
-        if let Some(bo) = best_ops {
-            if bo.len() > ops.len() {
-                best_ops = Some(ops);
-                best_state = Some(parents);
-            } else {
-                best_ops = Some(ops);
-                best_state = Some(parents);
-            }
+            shortest = Some(ops);
+            parents.copy_from_slice(&pvec);
         }
     }
 
-    (best_ops.unwrap(), best_state.unwrap())
+    shortest.unwrap()
 }
 
 #[derive(Copy, Clone)]
@@ -352,4 +386,8 @@ fn parse_input(path: &String) -> Result<Vec<String>, Box<dyn Error>> {
 
 fn keys_to_string<T: fmt::Display>(keys: &[T]) -> String {
     keys.iter().map(|k| k.to_string()).collect()
+}
+
+fn string_to_keys<T: TryFrom<char>>(s: &String) -> Result<Vec<T>, T::Error> {
+    s.chars().map(|c| T::try_from(c)).collect()
 }
