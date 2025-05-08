@@ -10,45 +10,52 @@ use std::ops::{Add, Sub};
 struct Cli {
     /// Input file
     #[arg(short, long, value_name = "INPUT")]
-    input: Option<String>,
+    file: Option<String>,
 
-    /// Output
+    /// Input line (aka desired output of the last keypad).
     #[arg(short, long)]
-    output: Option<String>,
+    line: Option<String>,
 
-    /// Key sequence
-    #[arg(long)]
+    /// Direction key inputs to the first robot.
+    #[arg(short, long)]
     ops: Option<String>,
+
+    /// Number of directional pads
+    #[arg(short, long, default_value_t = 2)]
+    dirpads: usize,
 }
 
 fn main() -> Result<(), Box<(dyn Error + 'static)>> {
     let cli = Cli::parse();
+    let dirpads = cli.dirpads;
 
-    if let Some(path) = cli.input {
+    if let Some(path) = cli.file {
         let mut sum = 0;
         for line in parse_input(&path)? {
-            sum += process_line(&line)?;
+            sum += process_line(dirpads, &line)?;
         }
         println!("Total Complexity: {}", sum);
     }
 
-    if let Some(output) = cli.output {
-        process_line(&output)?;
+    if let Some(output) = cli.line {
+        process_line(dirpads, &output)?;
     }
 
     if let Some(ops) = cli.ops {
         let ops = string_to_keys(&ops)?;
-        let results = Doors::run(ops)?;
+        let mut door = Doors::new(dirpads);
+        let results = door.run(ops)?;
         println!("{}", keys_to_string(&results));
     }
 
     Ok(())
 }
 
-fn process_line(line: &String) -> Result<usize, Box<dyn Error>> {
-    let num: usize = line[0..line.len() - 1].parse()?;
+fn process_line(dirpads: usize, line: &String) -> Result<usize, Box<dyn Error>> {
+    let num = parse_initial_number(&line).unwrap_or(0);
     let outputs: Vec<NumKey> = string_to_keys(&line)?;
-    let inputs = Doors::derive(outputs);
+    let mut doors = Doors::new(dirpads);
+    let inputs = doors.derive(outputs);
     let complexity = num * inputs.len();
     println!(
         "{}  {} x {} = {}",
@@ -60,39 +67,36 @@ fn process_line(line: &String) -> Result<usize, Box<dyn Error>> {
     Ok(complexity)
 }
 
-#[derive(Copy, Clone)]
 struct Doors {
     numpad: NumKey,
-    dirpads: [DirKey; 2],
+    dirpads: Vec<DirKey>,
 }
 
 impl Doors {
-    fn new() -> Doors {
+    fn new(dirpads: usize) -> Doors {
         Doors {
             numpad: NumKey::A,
-            dirpads: [DirKey::A; 2],
+            dirpads: vec![DirKey::A; dirpads],
         }
     }
 
-    fn derive(outputs: Vec<NumKey>) -> Vec<DirKey> {
-        let mut doors = Doors::new();
+    fn derive(&mut self, outputs: Vec<NumKey>) -> Vec<DirKey> {
         let mut result = Vec::new();
         for output in outputs {
-            let r = gen_input(output, 1, doors.numpad, &mut doors.dirpads);
+            let r = gen_input(output, 1, self.numpad, &mut self.dirpads);
             result.extend(r);
-            doors.numpad = output;
+            self.numpad = output;
         }
 
         result
     }
 
-    fn run(mut ops: Vec<DirKey>) -> Result<Vec<NumKey>, Box<(dyn Error)>> {
-        let doors = Doors::new();
-        for dirpad in doors.dirpads {
+    fn run(&mut self, mut ops: Vec<DirKey>) -> Result<Vec<NumKey>, Box<(dyn Error)>> {
+        for dirpad in self.dirpads.iter() {
             ops = dirpad.run(&ops)?.0;
             println!("{}", keys_to_string(&ops));
         }
-        Ok(doors.numpad.run(&ops)?.0)
+        Ok(self.numpad.run(&ops)?.0)
     }
 }
 
@@ -390,4 +394,9 @@ fn keys_to_string<T: fmt::Display>(keys: &[T]) -> String {
 
 fn string_to_keys<T: TryFrom<char>>(s: &String) -> Result<Vec<T>, T::Error> {
     s.chars().map(|c| T::try_from(c)).collect()
+}
+
+fn parse_initial_number(s: &str) -> Option<usize> {
+    let end = s.chars().take_while(|c| c.is_ascii_digit()).count();
+    s[..end].parse().ok()
 }
