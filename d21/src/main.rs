@@ -23,6 +23,10 @@ struct Cli {
     /// Number of directional pads
     #[arg(short, long, default_value_t = 2)]
     dirpads: usize,
+
+    /// Show the input string
+    #[arg(short, long, default_value_t = false)]
+    show: bool,
 }
 
 fn main() -> Result<(), Box<(dyn Error + 'static)>> {
@@ -32,13 +36,13 @@ fn main() -> Result<(), Box<(dyn Error + 'static)>> {
     if let Some(path) = cli.file {
         let mut sum = 0;
         for line in parse_input(&path)? {
-            sum += process_line(dirpads, &line)?;
+            sum += process_line(dirpads, &line, cli.show)?;
         }
         println!("Total Complexity: {}", sum);
     }
 
     if let Some(output) = cli.line {
-        process_line(dirpads, &output)?;
+        process_line(dirpads, &output, cli.show)?;
     }
 
     if let Some(ops) = cli.ops {
@@ -51,19 +55,21 @@ fn main() -> Result<(), Box<(dyn Error + 'static)>> {
     Ok(())
 }
 
-fn process_line(dirpads: usize, line: &String) -> Result<usize, Box<dyn Error>> {
+fn process_line(dirpads: usize, line: &String, show: bool) -> Result<usize, Box<dyn Error>> {
     let num = parse_initial_number(&line).unwrap_or(0);
     let outputs: Vec<NumKey> = string_to_keys(&line)?;
     let mut doors = Doors::new(dirpads);
-    let inputs = doors.derive(outputs);
-    let complexity = num * inputs.len();
-    println!(
-        "{}  {} x {} = {}",
-        keys_to_string(&inputs),
-        inputs.len(),
-        num,
-        complexity
-    );
+
+    let len = if show {
+        let inputs = doors.derive(outputs);
+        println!("{}", keys_to_string(&inputs));
+        inputs.len()
+    } else {
+        doors.complexity(outputs)
+    };
+
+    let complexity = len * num;
+    println!("{} x {} = {}", complexity, num, complexity);
     Ok(complexity)
 }
 
@@ -89,6 +95,16 @@ impl Doors {
         }
 
         result
+    }
+
+    fn complexity(&mut self, outputs: Vec<NumKey>) -> usize {
+        let mut total = 0;
+        for output in outputs {
+            total += gen_complexity(output, 1, self.numpad, &mut self.dirpads);
+            self.numpad = output;
+        }
+
+        total
     }
 
     fn run(&mut self, mut ops: Vec<DirKey>) -> Result<Vec<NumKey>, Box<(dyn Error)>> {
@@ -193,6 +209,42 @@ where
     }
 
     shortest.unwrap()
+}
+
+fn gen_complexity<T>(output: T, count: usize, start: T, parents: &mut [DirKey]) -> usize
+where
+    T: KeyPad,
+{
+    let mut shortest = usize::MAX;
+
+    // Find the "plan" that generates the shortest input sequence:
+    for plan in get_plans(start, output, count) {
+        let mut op_count = 0;
+        let mut pvec = parents.to_vec();
+        let plen = parents.len();
+
+        // Find the inputs:
+        for op in plan {
+            if plen != 0 {
+                op_count +=
+                    gen_complexity(op.key, op.count, pvec[plen - 1], &mut pvec[0..plen - 1]);
+                pvec[plen - 1] = op.key;
+            } else {
+                op_count += op.count;
+            }
+        }
+
+        if plen == 0 {
+            return op_count;
+        }
+
+        if shortest > op_count {
+            shortest = op_count;
+            parents.copy_from_slice(&pvec);
+        }
+    }
+
+    shortest
 }
 
 #[derive(Copy, Clone)]
