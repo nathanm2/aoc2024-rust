@@ -101,27 +101,22 @@ fn plans<T: KeyPad>(start: T, end: T) -> Vec<Vec<DirKey>> {
     let (xkey, ykey) = delta.get_direction_keys();
     let (xcount, ycount) = (delta.x.abs() as usize, delta.y.abs() as usize);
 
+    if xcount == 0 && ycount == 0 {
+        return vec![vec![DirKey::A]];
+    }
+
     let mut results = Vec::new();
     let xvec = Vec2 { x: delta.x, y: 0 };
     let yvec = Vec2 { x: 0, y: delta.y };
 
     if xcount > 0 && start.mv(xvec).is_some() {
-        let mut plan = vec![xkey; xcount];
-        plan.extend(vec![ykey; ycount]);
-        plan.push(DirKey::A);
-        results.push(plan);
+        results.push([vec![xkey; xcount], vec![ykey; ycount], vec![DirKey::A]].concat());
     }
 
     if ycount > 0 && start.mv(yvec).is_some() {
-        let mut plan = vec![ykey; ycount];
-        plan.extend(vec![xkey; xcount]);
-        plan.push(DirKey::A);
-        results.push(plan);
+        results.push([vec![ykey; ycount], vec![xkey; xcount], vec![DirKey::A]].concat());
     }
 
-    if xcount == 0 && ycount == 0 {
-        results.push(vec![DirKey::A]);
-    }
     results
 }
 
@@ -132,46 +127,45 @@ struct DirPadMemoKey {
     parents: usize,
 }
 
-type DirPadMemo = HashMap<DirPadMemoKey, usize>;
+struct DirPadMemo {
+    map: HashMap<DirPadMemoKey, usize>,
+}
 
-fn input_len(start: NumKey, end: NumKey, parents: usize, memos: &mut DirPadMemo) -> usize {
-    let mut shortest = usize::MAX;
-
-    // Find the "plan" that generates the shortest input sequence:
-    for plan in plans(start, end) {
-        let mut c = 0;
-        let mut parent_start = DirKey::A;
-
-        // Find the inputs:
-        for op in plan {
-            if parents != 0 {
-                c += input_len_dirpad(parent_start, op, parents - 1, memos);
-                parent_start = op;
-            } else {
-                c += 1;
-            }
-        }
-
-        if parents == 0 {
-            return c;
-        }
-
-        if shortest > c {
-            shortest = c;
+impl DirPadMemo {
+    fn new() -> Self {
+        DirPadMemo {
+            map: HashMap::new(),
         }
     }
 
-    shortest
+    fn get(&self, start: Option<DirKey>, end: Option<DirKey>, parents: usize) -> Option<&usize> {
+        let (Some(start), Some(end)) = (start, end) else {
+            return None;
+        };
+        self.map.get(&DirPadMemoKey {
+            start,
+            end,
+            parents,
+        })
+    }
+
+    fn insert(&mut self, start: Option<DirKey>, end: Option<DirKey>, parents: usize, value: usize) {
+        let (Some(start), Some(end)) = (start, end) else {
+            return;
+        };
+        self.map.insert(
+            DirPadMemoKey {
+                start,
+                end,
+                parents,
+            },
+            value,
+        );
+    }
 }
 
-fn input_len_dirpad(start: DirKey, end: DirKey, parents: usize, cache: &mut DirPadMemo) -> usize {
-    let memo_key = DirPadMemoKey {
-        start,
-        end,
-        parents,
-    };
-
-    if let Some(&shortest) = cache.get(&memo_key) {
+fn input_len<T: KeyPad>(start: T, end: T, parents: usize, memos: &mut DirPadMemo) -> usize {
+    if let Some(&shortest) = memos.get(start.try_dirkey(), end.try_dirkey(), parents) {
         return shortest;
     }
 
@@ -184,24 +178,23 @@ fn input_len_dirpad(start: DirKey, end: DirKey, parents: usize, cache: &mut DirP
 
         // Find the inputs:
         for op in plan {
-            if parents != 0 {
-                c += input_len_dirpad(parent_start, op, parents - 1, cache);
+            c += if parents != 0 {
+                let len = input_len(parent_start, op, parents - 1, memos);
                 parent_start = op;
+                len
             } else {
-                c += 1;
-            }
+                1
+            };
         }
 
         if parents == 0 {
             return c;
         }
 
-        if shortest > c {
-            shortest = c;
-        }
+        shortest = shortest.min(c);
     }
 
-    cache.insert(memo_key, shortest);
+    memos.insert(start.try_dirkey(), end.try_dirkey(), parents, shortest);
     shortest
 }
 
@@ -243,6 +236,7 @@ impl Vec2 {
 
 trait KeyPad: Sized + Into<Vec2> + fmt::Display + Copy {
     fn mv(&self, dir: Vec2) -> Option<Self>;
+    fn try_dirkey(&self) -> Option<DirKey>;
 
     fn run(self, ops: &[DirKey]) -> Result<(Vec<Self>, Self), String> {
         let mut cur = self;
@@ -310,6 +304,10 @@ impl KeyPad for NumKey {
             None
         }
     }
+
+    fn try_dirkey(&self) -> Option<DirKey> {
+        None
+    }
 }
 
 impl fmt::Display for NumKey {
@@ -349,6 +347,10 @@ impl KeyPad for DirKey {
         } else {
             None
         }
+    }
+
+    fn try_dirkey(&self) -> Option<DirKey> {
+        Some(*self)
     }
 }
 
