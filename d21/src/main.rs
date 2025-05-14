@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use clap::Parser;
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 use std::fs;
@@ -23,10 +24,6 @@ struct Cli {
     /// Number of directional pads
     #[arg(short, long, default_value_t = 2)]
     dirpads: usize,
-
-    /// Show the input string
-    #[arg(short, long, default_value_t = false)]
-    show: bool,
 }
 
 fn main() -> Result<(), Box<(dyn Error + 'static)>> {
@@ -36,13 +33,13 @@ fn main() -> Result<(), Box<(dyn Error + 'static)>> {
     if let Some(path) = cli.file {
         let mut sum = 0;
         for line in parse_input(&path)? {
-            sum += process_line(dirpads, &line, cli.show)?;
+            sum += process_line(dirpads, &line)?;
         }
         println!("Total Complexity: {}", sum);
     }
 
     if let Some(output) = cli.line {
-        process_line(dirpads, &output, cli.show)?;
+        process_line(dirpads, &output)?;
     }
 
     if let Some(ops) = cli.ops {
@@ -55,21 +52,14 @@ fn main() -> Result<(), Box<(dyn Error + 'static)>> {
     Ok(())
 }
 
-fn process_line(dirpads: usize, line: &String, show: bool) -> Result<usize, Box<dyn Error>> {
+fn process_line(dirpads: usize, line: &String) -> Result<usize, Box<dyn Error>> {
     let num = parse_initial_number(&line).unwrap_or(0);
     let outputs: Vec<NumKey> = string_to_keys(&line)?;
     let mut doors = Doors::new(dirpads);
-
-    let len = if show {
-        let inputs = doors.derive(outputs);
-        println!("{}", keys_to_string(&inputs));
-        inputs.len()
-    } else {
-        doors.complexity(outputs)
-    };
+    let len = doors.input_len(outputs);
 
     let complexity = len * num;
-    println!("{} x {} = {}", complexity, num, complexity);
+    println!("{} x {} = {}", len, num, complexity);
     Ok(complexity)
 }
 
@@ -86,25 +76,15 @@ impl Doors {
         }
     }
 
-    fn derive(&mut self, outputs: Vec<NumKey>) -> Vec<DirKey> {
-        let mut result = Vec::new();
+    fn input_len(&mut self, outputs: Vec<NumKey>) -> usize {
+        let mut result = 0;
+        let mut memos = DirPadMemo::new();
         for output in outputs {
-            let r = gen_input(output, 1, self.numpad, &mut self.dirpads);
-            result.extend(r);
+            result += input_len(self.numpad, output, self.dirpads.len(), &mut memos);
             self.numpad = output;
         }
 
         result
-    }
-
-    fn complexity(&mut self, outputs: Vec<NumKey>) -> usize {
-        let mut total = 0;
-        for output in outputs {
-            total += gen_complexity(output, 1, self.numpad, &mut self.dirpads);
-            self.numpad = output;
-        }
-
-        total
     }
 
     fn run(&mut self, mut ops: Vec<DirKey>) -> Result<Vec<NumKey>, Box<(dyn Error)>> {
@@ -116,134 +96,112 @@ impl Doors {
     }
 }
 
-struct DirKeyOp {
-    key: DirKey,
-    count: usize,
-}
-
-fn get_plans<T: KeyPad>(start: T, end: T, count: usize) -> Vec<Vec<DirKeyOp>> {
+fn plans<T: KeyPad>(start: T, end: T) -> Vec<Vec<DirKey>> {
     let delta = end.into() - start.into();
-    let (xkey, ykey) = get_direction_keys(&delta);
+    let (xkey, ykey) = delta.get_direction_keys();
     let (xcount, ycount) = (delta.x.abs() as usize, delta.y.abs() as usize);
 
     let mut results = Vec::new();
     let xvec = Vec2 { x: delta.x, y: 0 };
     let yvec = Vec2 { x: 0, y: delta.y };
 
-    if ycount > 0 && start.mv(yvec).is_some() {
-        results.push(add_path(ykey, ycount, xkey, xcount, count));
-    }
     if xcount > 0 && start.mv(xvec).is_some() {
-        results.push(add_path(xkey, xcount, ykey, ycount, count));
+        let mut plan = vec![xkey; xcount];
+        plan.extend(vec![ykey; ycount]);
+        plan.push(DirKey::A);
+        results.push(plan);
+    }
+
+    if ycount > 0 && start.mv(yvec).is_some() {
+        let mut plan = vec![ykey; ycount];
+        plan.extend(vec![xkey; xcount]);
+        plan.push(DirKey::A);
+        results.push(plan);
+    }
+
+    if xcount == 0 && ycount == 0 {
+        results.push(vec![DirKey::A]);
     }
     results
 }
 
-fn add_path(
-    first_key: DirKey,
-    first_count: usize,
-    second_key: DirKey,
-    second_count: usize,
-    a_count: usize,
-) -> Vec<DirKeyOp> {
-    let mut path = vec![DirKeyOp {
-        key: first_key,
-        count: first_count,
-    }];
-    if second_count > 0 {
-        path.push(DirKeyOp {
-            key: second_key,
-            count: second_count,
-        });
-    }
-    path.push(DirKeyOp {
-        key: DirKey::A,
-        count: a_count,
-    });
-
-    path
+#[derive(PartialEq, Eq, Hash)]
+struct DirPadMemoKey {
+    start: DirKey,
+    end: DirKey,
+    parents: usize,
 }
 
-fn get_direction_keys(delta: &Vec2) -> (DirKey, DirKey) {
-    let xkey = if delta.x < 0 { DirKey::W } else { DirKey::E };
-    let ykey = if delta.y < 0 { DirKey::N } else { DirKey::S };
-    (xkey, ykey)
-}
+type DirPadMemo = HashMap<DirPadMemoKey, usize>;
 
-fn gen_input<T>(output: T, count: usize, start: T, parents: &mut [DirKey]) -> Vec<DirKey>
-where
-    T: KeyPad,
-{
-    let mut shortest: Option<Vec<DirKey>> = None;
-
-    // Find the "plan" that generates the shortest input sequence:
-    for plan in get_plans(start, output, count) {
-        let mut ops = Vec::new();
-        let mut pvec = parents.to_vec();
-        let plen = parents.len();
-
-        // Find the inputs:
-        for op in plan {
-            if plen != 0 {
-                let o = gen_input(op.key, op.count, pvec[plen - 1], &mut pvec[0..plen - 1]);
-                ops.extend(o);
-                pvec[plen - 1] = op.key;
-            } else {
-                ops.extend(vec![op.key; op.count]);
-            }
-        }
-
-        if plen == 0 {
-            return ops;
-        }
-
-        if let Some(ref s) = shortest {
-            if s.len() > ops.len() {
-                shortest = Some(ops);
-                parents.copy_from_slice(&pvec);
-            }
-        } else {
-            shortest = Some(ops);
-            parents.copy_from_slice(&pvec);
-        }
-    }
-
-    shortest.unwrap()
-}
-
-fn gen_complexity<T>(output: T, count: usize, start: T, parents: &mut [DirKey]) -> usize
-where
-    T: KeyPad,
-{
+fn input_len(start: NumKey, end: NumKey, parents: usize, memos: &mut DirPadMemo) -> usize {
     let mut shortest = usize::MAX;
 
     // Find the "plan" that generates the shortest input sequence:
-    for plan in get_plans(start, output, count) {
-        let mut op_count = 0;
-        let mut pvec = parents.to_vec();
-        let plen = parents.len();
+    for plan in plans(start, end) {
+        let mut c = 0;
+        let mut parent_start = DirKey::A;
 
         // Find the inputs:
         for op in plan {
-            if plen != 0 {
-                op_count +=
-                    gen_complexity(op.key, op.count, pvec[plen - 1], &mut pvec[0..plen - 1]);
-                pvec[plen - 1] = op.key;
+            if parents != 0 {
+                c += input_len_dirpad(parent_start, op, parents - 1, memos);
+                parent_start = op;
             } else {
-                op_count += op.count;
+                c += 1;
             }
         }
 
-        if plen == 0 {
-            return op_count;
+        if parents == 0 {
+            return c;
         }
 
-        if shortest > op_count {
-            shortest = op_count;
-            parents.copy_from_slice(&pvec);
+        if shortest > c {
+            shortest = c;
         }
     }
 
+    shortest
+}
+
+fn input_len_dirpad(start: DirKey, end: DirKey, parents: usize, cache: &mut DirPadMemo) -> usize {
+    let memo_key = DirPadMemoKey {
+        start,
+        end,
+        parents,
+    };
+
+    if let Some(&shortest) = cache.get(&memo_key) {
+        return shortest;
+    }
+
+    let mut shortest = usize::MAX;
+
+    // Find the "plan" that generates the shortest input sequence:
+    for plan in plans(start, end) {
+        let mut c = 0;
+        let mut parent_start = DirKey::A;
+
+        // Find the inputs:
+        for op in plan {
+            if parents != 0 {
+                c += input_len_dirpad(parent_start, op, parents - 1, cache);
+                parent_start = op;
+            } else {
+                c += 1;
+            }
+        }
+
+        if parents == 0 {
+            return c;
+        }
+
+        if shortest > c {
+            shortest = c;
+        }
+    }
+
+    cache.insert(memo_key, shortest);
     shortest
 }
 
@@ -276,10 +234,10 @@ impl Sub<Vec2> for Vec2 {
 }
 
 impl Vec2 {
-    fn dirs(&self) -> (DirKey, usize, DirKey, usize) {
-        let xdir = if self.x < 0 { DirKey::W } else { DirKey::E };
-        let ydir = if self.y < 0 { DirKey::N } else { DirKey::S };
-        (xdir, self.x.abs() as usize, ydir, self.y.abs() as usize)
+    fn get_direction_keys(&self) -> (DirKey, DirKey) {
+        let xkey = if self.x < 0 { DirKey::W } else { DirKey::E };
+        let ykey = if self.y < 0 { DirKey::N } else { DirKey::S };
+        (xkey, ykey)
     }
 }
 
@@ -361,7 +319,7 @@ impl fmt::Display for NumKey {
     }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
 enum DirKey {
     Gap = 0,
     N = 1,

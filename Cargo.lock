@@ -201,13 +201,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "d21b"
-version = "0.1.0"
-dependencies = [
- "clap",
-]
-
-[[package]]
 name = "d3"
 version = "0.1.0"
 
