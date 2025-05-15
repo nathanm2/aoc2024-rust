@@ -1,0 +1,8 @@
+[package]
+name = "d22"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+aoc = { version = "0.1.0", path = "../aoc" }
+clap = { version = "4.5.38", features = ["derive"] }
