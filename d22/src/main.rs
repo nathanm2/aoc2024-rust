@@ -2,6 +2,7 @@
 
 use aoc::read_ints;
 use clap::Parser;
+use std::collections::HashMap;
 use std::error::Error;
 
 #[derive(Parser)]
@@ -13,17 +14,73 @@ struct Cli {
 
 fn main() -> Result<(), Box<(dyn Error + 'static)>> {
     let cli = Cli::parse();
-    let values = read_ints::<u64>(cli.file)?;
-    let sum: u64 = values
-        .iter()
-        .map(|&value| {
-            let secret = find_secret(value, 2000);
-            println!("{}; {}", value, secret);
-            secret
-        })
-        .sum();
-    println!("Sum: {}", sum);
+    let seeds = read_ints::<u64>(cli.file)?;
+
+    let sum = pseudo_sum(&seeds, 2000);
+    println!("Part 1: {}", sum);
+
+    let (delta, sum) = find_max(&seeds);
+    println!("Part 2: {} ({:?})", sum, delta);
+
     Ok(())
+}
+
+#[derive(Debug, Hash, Default, PartialEq, Eq, Clone)]
+struct Deltas {
+    values: [i8; 4],
+}
+
+impl Deltas {
+    fn push(&mut self, value: i8) {
+        self.values.rotate_left(1);
+        self.values[3] = value;
+    }
+}
+
+fn pseudo_sum(seeds: &Vec<u64>, count: usize) -> u64 {
+    seeds.iter().map(|&seed| find_secret(seed, count)).sum()
+}
+
+fn find_max(seeds: &Vec<u64>) -> (Deltas, u64) {
+    let mut max = 0;
+    let mut max_delta = Deltas::default();
+    let mut sums = HashMap::new();
+
+    for seed in seeds {
+        let seed_max = find_seed_max(*seed, 2000);
+        for (delta, value) in seed_max.iter() {
+            sums.entry(delta.clone())
+                .and_modify(|e: &mut u64| *e += *value)
+                .or_insert(*value);
+        }
+    }
+
+    for (delta, value) in sums.iter() {
+        if max < *value {
+            max = *value;
+            max_delta = delta.clone();
+        }
+    }
+
+    (max_delta, max)
+}
+
+fn find_seed_max(seed: u64, count: usize) -> HashMap<Deltas, u64> {
+    let mut seed_map = HashMap::new();
+    let mut secret = seed;
+    let mut deltas = Deltas::default();
+    let mut prior = secret % 10;
+
+    for idx in 0..count {
+        secret = next_secret(secret);
+        let cur = secret % 10;
+        deltas.push(cur as i8 - prior as i8);
+        if idx >= 4 {
+            seed_map.entry(deltas.clone()).or_insert(cur);
+        }
+        prior = cur;
+    }
+    seed_map
 }
 
 fn find_secret(start: u64, count: usize) -> u64 {
