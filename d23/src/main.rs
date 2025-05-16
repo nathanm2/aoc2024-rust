@@ -21,9 +21,29 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 fn part1(graph: &Graph) {
-    for (id, node) in graph.nodes.iter() {
-        println!("{}", id);
+    let mut explored = HashSet::new();
+    let mut count = 0;
+
+    for (name, cur) in graph.nodes.iter() {
+        let mut cur_peers: HashSet<_> = cur.peers.difference(&explored).cloned().collect();
+        while !cur_peers.is_empty() {
+            let peer = cur_peers.iter().next().unwrap().clone();
+            let peer_node = graph.nodes.get(&peer).unwrap();
+            for shared_peer in peer_node.peers.intersection(&cur_peers) {
+                if [name, &peer, shared_peer]
+                    .iter()
+                    .any(|n| n.starts_with("t"))
+                {
+                    println!("{}-{}-{}", name, peer, shared_peer);
+                    count += 1;
+                }
+            }
+            cur_peers.remove(&peer);
+        }
+        explored.insert(name.clone());
     }
+
+    println!("Count: {}", count);
 }
 
 #[derive(Debug)]
