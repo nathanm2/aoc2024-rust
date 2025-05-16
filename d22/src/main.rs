@@ -42,27 +42,18 @@ fn pseudo_sum(seeds: &Vec<u64>, count: usize) -> u64 {
 }
 
 fn find_max(seeds: &Vec<u64>) -> (Deltas, u64) {
-    let mut max = 0;
-    let mut max_delta = Deltas::default();
-    let mut sums = HashMap::new();
+    let sums: HashMap<Deltas, u64> = seeds.iter()
+        .flat_map(|&seed| find_seed_max(seed, 2000))
+        .fold(HashMap::new(), |mut acc, (delta, value)| {
+            acc.entry(delta)
+                .and_modify(|e| *e += value)
+                .or_insert(value);
+            acc
+        });
 
-    for seed in seeds {
-        let seed_max = find_seed_max(*seed, 2000);
-        for (delta, value) in seed_max.iter() {
-            sums.entry(delta.clone())
-                .and_modify(|e: &mut u64| *e += *value)
-                .or_insert(*value);
-        }
-    }
-
-    for (delta, value) in sums.iter() {
-        if max < *value {
-            max = *value;
-            max_delta = delta.clone();
-        }
-    }
-
-    (max_delta, max)
+    sums.into_iter()
+        .max_by_key(|&(_, value)| value)
+        .unwrap_or((Deltas::default(), 0))
 }
 
 fn find_seed_max(seed: u64, count: usize) -> HashMap<Deltas, u64> {
