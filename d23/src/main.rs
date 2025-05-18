@@ -3,6 +3,7 @@
 use clap::Parser;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
+use std::fmt;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
@@ -16,13 +17,57 @@ struct Cli {
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
     let graph = build_graph(cli.file)?;
-    part1(&graph);
+    let triples = get_triples(&graph);
+
+    for triple in &triples {
+        println!("{}", triple);
+    }
+
+    let t_count = triples
+        .iter()
+        .filter(|e| Triple::starts_with(e, 't'))
+        .count();
+    println!("Part 1: {}", t_count);
+
+    let memberships = get_memberships(&triples);
+    for membership in memberships {
+        println!("{}: {}", membership.0, membership.1);
+    }
     Ok(())
 }
 
-fn part1(graph: &Graph) {
+#[derive(Eq, PartialEq, PartialOrd, Ord)]
+struct Triple {
+    a: String,
+    b: String,
+    c: String,
+}
+
+impl Triple {
+    fn new(a: &str, b: &str, c: &str) -> Self {
+        let mut tmp = [a, b, c];
+        tmp.sort();
+        Triple {
+            a: tmp[0].to_string(),
+            b: tmp[1].to_string(),
+            c: tmp[2].to_string(),
+        }
+    }
+
+    fn starts_with(&self, ch: char) -> bool {
+        self.a.starts_with(ch) || self.b.starts_with(ch) || self.c.starts_with(ch)
+    }
+}
+
+impl fmt::Display for Triple {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}-{}-{}", self.a, self.b, self.c)
+    }
+}
+
+fn get_triples(graph: &Graph) -> Vec<Triple> {
+    let mut results = Vec::new();
     let mut explored = HashSet::new();
-    let mut count = 0;
 
     for (name, cur) in graph.nodes.iter() {
         let mut cur_peers: HashSet<_> = cur.peers.difference(&explored).cloned().collect();
@@ -30,20 +75,28 @@ fn part1(graph: &Graph) {
             let peer = cur_peers.iter().next().unwrap().clone();
             let peer_node = graph.nodes.get(&peer).unwrap();
             for shared_peer in peer_node.peers.intersection(&cur_peers) {
-                if [name, &peer, shared_peer]
-                    .iter()
-                    .any(|n| n.starts_with("t"))
-                {
-                    println!("{}-{}-{}", name, peer, shared_peer);
-                    count += 1;
-                }
+                results.push(Triple::new(name, &peer, shared_peer))
             }
             cur_peers.remove(&peer);
         }
         explored.insert(name.clone());
     }
 
-    println!("Count: {}", count);
+    results.sort();
+    results
+}
+
+fn get_memberships<'a>(triples: &'a Vec<Triple>) -> Vec<(&'a str, usize)> {
+    let mut tmp = HashMap::<&str, usize>::new();
+    for triple in triples {
+        for name in [&triple.a, &triple.b, &triple.c] {
+            tmp.entry(&name).and_modify(|e| *e += 1).or_insert(1);
+        }
+    }
+
+    let mut results: Vec<(&str, usize)> = tmp.iter().map(|(&k, &v)| (k, v)).collect();
+    results.sort_by_key(|k| k.1);
+    results
 }
 
 #[derive(Debug)]
@@ -56,6 +109,10 @@ impl Node {
         Node {
             peers: HashSet::new(),
         }
+    }
+
+    fn degree(&self) -> usize {
+        self.peers.len()
     }
 }
 
