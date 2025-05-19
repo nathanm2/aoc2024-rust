@@ -1,9 +1,9 @@
 #![allow(dead_code)]
 
 use clap::Parser;
-use std::collections::{HashMap, HashSet};
+use fixedbitset::FixedBitSet;
+use std::collections::HashMap;
 use std::error::Error;
-use std::fmt;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
@@ -16,135 +16,135 @@ struct Cli {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
-    let graph = build_graph(cli.file)?;
+    let graph = build_graph(cli.file, 600)?;
     let triples = get_triples(&graph);
+    let tset = names_start_with(&graph, 't');
 
-    for triple in &triples {
-        println!("{}", triple);
-    }
-
-    let t_count = triples
-        .iter()
-        .filter(|e| Triple::starts_with(e, 't'))
-        .count();
+    let t_count = triples.iter().filter(|e| e.member_of(&tset)).count();
     println!("Part 1: {}", t_count);
 
-    let memberships = get_memberships(&triples);
-    for membership in memberships {
-        println!("{}: {}", membership.0, membership.1);
-    }
     Ok(())
+}
+
+fn names_start_with(graph: &Graph, ch: char) -> FixedBitSet {
+    let mut result = FixedBitSet::with_capacity(graph.capacity);
+    for (idx, node) in graph.nodes.iter().enumerate() {
+        if node.name.starts_with(ch) {
+            result.insert(idx);
+        }
+    }
+
+    result
 }
 
 #[derive(Eq, PartialEq, PartialOrd, Ord)]
 struct Triple {
-    a: String,
-    b: String,
-    c: String,
+    values: [usize; 3],
 }
 
 impl Triple {
-    fn new(a: &str, b: &str, c: &str) -> Self {
+    fn new(a: usize, b: usize, c: usize) -> Self {
         let mut tmp = [a, b, c];
         tmp.sort();
-        Triple {
-            a: tmp[0].to_string(),
-            b: tmp[1].to_string(),
-            c: tmp[2].to_string(),
-        }
+        Triple { values: tmp }
     }
 
-    fn starts_with(&self, ch: char) -> bool {
-        self.a.starts_with(ch) || self.b.starts_with(ch) || self.c.starts_with(ch)
-    }
-}
-
-impl fmt::Display for Triple {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}-{}-{}", self.a, self.b, self.c)
+    fn member_of(&self, white_list: &FixedBitSet) -> bool {
+        self.values.iter().any(|&i| white_list.contains(i))
     }
 }
 
 fn get_triples(graph: &Graph) -> Vec<Triple> {
     let mut results = Vec::new();
-    let mut explored = HashSet::new();
+    let mut explored = FixedBitSet::with_capacity(graph.capacity);
 
-    for (name, cur) in graph.nodes.iter() {
-        let mut cur_peers: HashSet<_> = cur.peers.difference(&explored).cloned().collect();
-        while !cur_peers.is_empty() {
-            let peer = cur_peers.iter().next().unwrap().clone();
-            let peer_node = graph.nodes.get(&peer).unwrap();
+    for (idx, cur) in graph.nodes.iter().enumerate() {
+        let mut cur_peers: FixedBitSet = cur.peers.difference(&explored).collect();
+        while !cur_peers.is_clear() {
+            let peer_idx = cur_peers.minimum().unwrap();
+            let peer_node = &graph.nodes[peer_idx];
             for shared_peer in peer_node.peers.intersection(&cur_peers) {
-                results.push(Triple::new(name, &peer, shared_peer))
+                results.push(Triple::new(idx, peer_idx, shared_peer));
             }
-            cur_peers.remove(&peer);
+            cur_peers.remove(peer_idx);
         }
-        explored.insert(name.clone());
+        explored.insert(idx);
     }
 
     results.sort();
     results
 }
 
-fn get_memberships<'a>(triples: &'a Vec<Triple>) -> Vec<(&'a str, usize)> {
-    let mut tmp = HashMap::<&str, usize>::new();
-    for triple in triples {
-        for name in [&triple.a, &triple.b, &triple.c] {
-            tmp.entry(&name).and_modify(|e| *e += 1).or_insert(1);
-        }
-    }
-
-    let mut results: Vec<(&str, usize)> = tmp.iter().map(|(&k, &v)| (k, v)).collect();
-    results.sort_by_key(|k| k.1);
-    results
-}
-
 #[derive(Debug)]
 struct Node {
-    peers: HashSet<String>,
+    name: String,
+    peers: FixedBitSet,
 }
 
 impl Node {
-    fn new() -> Self {
+    fn new(name: &str, capacity: usize) -> Self {
         Node {
-            peers: HashSet::new(),
+            name: name.to_string(),
+            peers: FixedBitSet::with_capacity(capacity),
         }
-    }
-
-    fn degree(&self) -> usize {
-        self.peers.len()
     }
 }
 
 #[derive(Debug)]
 struct Graph {
-    nodes: HashMap<String, Node>,
+    capacity: usize,
+    nodes: Vec<Node>,
 }
 
-impl Graph {
-    fn new() -> Self {
-        Graph {
-            nodes: HashMap::new(),
+struct GraphBuilder {
+    names: HashMap<String, usize>,
+    nodes: Vec<Node>,
+    capacity: usize,
+}
+
+impl GraphBuilder {
+    fn new(capacity: usize) -> GraphBuilder {
+        GraphBuilder {
+            names: HashMap::new(),
+            nodes: Vec::new(),
+            capacity,
         }
     }
 
-    fn add_peer(&mut self, node: &str, peer: &str) {
-        self.nodes
-            .entry(node.to_string())
-            .or_insert_with(Node::new)
-            .peers
-            .insert(peer.to_string());
+    fn build(self) -> Graph {
+        Graph {
+            capacity: self.capacity,
+            nodes: self.nodes,
+        }
+    }
+
+    fn find_index(&mut self, name: &str) -> usize {
+        if let Some(&i) = self.names.get(name) {
+            i
+        } else {
+            let i = self.nodes.len();
+            self.nodes.push(Node::new(name, self.capacity));
+            self.names.insert(name.to_string(), i);
+            i
+        }
+    }
+
+    fn add_peer(&mut self, left: &str, right: &str) {
+        let left = self.find_index(left);
+        let right = self.find_index(right);
+
+        self.nodes[left].peers.insert(right);
+        self.nodes[right].peers.insert(left);
     }
 }
 
-fn build_graph(path: String) -> Result<Graph, Box<dyn Error>> {
-    let mut graph = Graph::new();
+fn build_graph(path: String, capacity: usize) -> Result<Graph, Box<dyn Error>> {
+    let mut builder = GraphBuilder::new(capacity);
 
     for line in BufReader::new(File::open(path)?).lines() {
         let line = line?;
         let (left, right) = line.split_once('-').ok_or_else(|| "Invalid line format")?;
-        graph.add_peer(left, right);
-        graph.add_peer(right, left);
+        builder.add_peer(left, right);
     }
-    Ok(graph)
+    Ok(builder.build())
 }
