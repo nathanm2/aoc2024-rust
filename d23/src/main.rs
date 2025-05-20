@@ -17,13 +17,27 @@ struct Cli {
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
     let graph = build_graph(cli.file, 600)?;
+
+    // Part 1:
     let triples = get_triples(&graph);
     let tset = names_start_with(&graph, 't');
-
     let t_count = triples.iter().filter(|e| e.member_of(&tset)).count();
     println!("Part 1: {}", t_count);
 
+    // Part 2:
+    let (clique, _) = max_clique(&graph);
+    display_clique(&graph, &clique);
+
     Ok(())
+}
+
+fn display_clique(graph: &Graph, clique: &FixedBitSet) {
+    let mut cnames: Vec<&str> = Vec::new();
+    for idx in clique.ones() {
+        cnames.push(&graph.nodes[idx].name);
+    }
+    cnames.sort();
+    println!("{}", cnames.join(","));
 }
 
 fn names_start_with(graph: &Graph, ch: char) -> FixedBitSet {
@@ -73,6 +87,45 @@ fn get_triples(graph: &Graph) -> Vec<Triple> {
 
     results.sort();
     results
+}
+
+fn max_clique(graph: &Graph) -> (FixedBitSet, usize) {
+    let mut exclude = FixedBitSet::with_capacity(graph.capacity);
+    let mut max_clique = FixedBitSet::with_capacity(graph.capacity);
+    let mut max_clique_len = 0;
+
+    for node_idx in 0..graph.nodes.len() {
+        let (clique, clique_len) = max_clique_node(graph, node_idx, &exclude);
+        if clique_len > max_clique_len {
+            max_clique = clique;
+            max_clique_len = clique_len;
+        }
+        exclude.insert(node_idx);
+    }
+
+    (max_clique, max_clique_len)
+}
+
+fn max_clique_node(graph: &Graph, node_idx: usize, peers: &FixedBitSet) -> (FixedBitSet, usize) {
+    let node = &graph.nodes[node_idx];
+    let mut peers: FixedBitSet = node.peers.intersection(peers).collect();
+    let mut max_clique = None;
+    let mut max_clique_size = 0;
+
+    while !peers.is_clear() {
+        let peer = peers.minimum().unwrap();
+        let (clique, clique_size) = max_clique_node(graph, peer, &peers);
+        if max_clique_size < clique_size {
+            max_clique = Some(clique);
+            max_clique_size = clique_size;
+        }
+        peers.remove(peer);
+    }
+
+    let mut clique = max_clique.unwrap_or_else(|| FixedBitSet::with_capacity(graph.capacity));
+    max_clique_size += 1;
+    clique.insert(node_idx);
+    (clique, max_clique_size)
 }
 
 #[derive(Debug)]
