@@ -221,6 +221,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "d24"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "regex",
+]
+
+[[package]]
 name = "d3"
 version = "0.1.0"
 
