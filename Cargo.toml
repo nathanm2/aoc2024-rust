@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "aoc",
     "d1",
     "d2",
     "d3",
@@ -22,8 +23,8 @@ members = [
     "d19",
     "d20",
     "d21",
-    "aoc",
     "d22",
-    "d23", "d24",
+    "d23",
+    "d24",
 ]
 

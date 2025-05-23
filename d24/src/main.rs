@@ -12,16 +12,25 @@ struct Cli {
     /// Input file
     #[arg(short, long)]
     file: String,
+
+    /// X argument.
+    #[arg(short)]
+    x: Option<u64>,
+
+    /// Y argument.
+    #[arg(short)]
+    y: Option<u64>,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
-    let (circuit, mut state) = parse_file(cli.file)?;
+    let (circuit, x, y) = parse_file(cli.file)?;
+    let x = cli.x.unwrap_or(x);
+    let y = cli.y.unwrap_or(y);
 
     // Part 1:
-    circuit.run(&mut state);
-    let output = circuit.output(&state);
-    println!("Part 1: {}", output);
+    let (output, _state) = circuit.run(x, y);
+    println!("Output: {}", output);
 
     Ok(())
 }
@@ -29,13 +38,34 @@ fn main() -> Result<(), Box<dyn Error>> {
 struct Circuit {
     wires: Vec<Wire>,
     gates: Vec<Gate>,
+    x_ids: Vec<WireId>,
+    y_ids: Vec<WireId>,
+    z_ids: Vec<WireId>,
+}
+
+struct CircuitState {
+    wires: Vec<Option<u8>>,
+    gates: Vec<Option<u8>>,
+}
+
+impl CircuitState {
+    fn new(wire_sz: usize, gate_sz: usize) -> Self {
+        CircuitState {
+            wires: vec![None; wire_sz],
+            gates: vec![None; gate_sz],
+        }
+    }
+
+    fn get_wire(&self, id: WireId) -> Option<u8> {
+        self.wires[id.0]
+    }
 }
 
 type GateSet = HashSet<GateId>;
 type WireSet = HashSet<WireId>;
 
 impl Circuit {
-    fn run(&self, state: &mut WireState) {
+    fn run(&self, x: u64, y: u64) -> (u64, CircuitState) {
         let mut wire_set = self.initial_wire_set(state);
         let mut gate_set = GateSet::new();
 
@@ -100,11 +130,11 @@ enum GateOp {
 struct Gate {
     op: GateOp,
     input: [WireId; 2],
-    out: WireId,
+    output: WireId,
 }
 
 impl Gate {
-    fn run(&self, wire_state: &WireState) -> Option<u8> {
+    fn run(&self, state: &CircuitState) -> Option<u8> {
         let [a, b] = self.input.map(|id| wire_state[id.0]);
         match (a, b) {
             (Some(a), Some(b)) => Some(match self.op {
@@ -119,25 +149,26 @@ impl Gate {
 
 struct Wire {
     name: String,
-    out: Vec<GateId>,
+    input: Option<GateId>,
+    output: Vec<GateId>,
 }
 
 impl Wire {
     fn new(name: &str) -> Self {
         Wire {
             name: name.to_owned(),
-            out: Vec::new(),
+            input: None,
+            output: Vec::new(),
         }
     }
 }
-
-type WireState = Vec<Option<u8>>;
 
 struct CircuitBuilder {
     wire_names: HashMap<String, WireId>,
     wires: Vec<Wire>,
     gates: Vec<Gate>,
-    wire_state: WireState,
+    x: u64,
+    y: u64,
 }
 
 impl CircuitBuilder {
@@ -146,7 +177,8 @@ impl CircuitBuilder {
             wire_names: HashMap::new(),
             wires: Vec::new(),
             gates: Vec::new(),
-            wire_state: Vec::new(),
+            x: 0,
+            y: 0,
         }
     }
 
@@ -156,20 +188,27 @@ impl CircuitBuilder {
         } else {
             let id = WireId(self.wires.len());
             self.wires.push(Wire::new(name));
-            self.wire_state.push(None);
             self.wire_names.insert(name.to_owned(), id);
             id
         }
     }
 
-    fn add_wire(&mut self, name: &str, state: &str) -> Result<(), String> {
+    fn add_wire(&mut self, name: &str, state: &str) -> Result<(), Box<dyn Error>> {
         let state = match state {
             "0" => 0,
             "1" => 1,
-            _ => return Err(format!("Invalid wire value: {} : {}", name, state)),
+            _ => return Err(format!("Invalid wire value: {} : {}", name, state))?,
         };
-        let wire_id = self.get_wire_id(name);
-        self.wire_state[wire_id.0] = Some(state);
+
+        let order = name[1..].parse::<u32>()?;
+        let value = state * 2u64.pow(order);
+        if name.starts_with('x') {
+            self.x += value;
+        } else {
+            self.y += value;
+        }
+
+        let _ = self.get_wire_id(name);
         Ok(())
     }
 
@@ -177,6 +216,7 @@ impl CircuitBuilder {
         let left = self.get_wire_id(left);
         let right = self.get_wire_id(right);
         let out = self.get_wire_id(out);
+
         let op = match op {
             "AND" => GateOp::And,
             "OR" => GateOp::Or,
@@ -188,25 +228,44 @@ impl CircuitBuilder {
         self.gates.push(Gate {
             op,
             input: [left, right],
-            out,
+            output: out,
         });
-        self.wires[left.0].out.push(gate_id);
-        self.wires[right.0].out.push(gate_id);
+        self.wires[left.0].output.push(gate_id);
+        self.wires[right.0].output.push(gate_id);
+        self.wires[out.0].input = Some(gate_id);
         Ok(())
     }
 
-    fn build(self) -> (Circuit, WireState) {
+    fn wire_ids(&self, ch: char) -> Vec<WireId> {
+        let mut ids: Vec<_> = self
+            .wires
+            .iter()
+            .enumerate()
+            .filter(|(_, wire)| wire.name.starts_with(ch))
+            .collect();
+        ids.sort_by_key(|(_, wire)| &wire.name);
+        ids.iter().map(|(id, _)| WireId(*id)).collect()
+    }
+
+    fn build(self) -> (Circuit, u64, u64) {
+        let x_ids = self.wire_ids('x');
+        let y_ids = self.wire_ids('y');
+        let z_ids = self.wire_ids('z');
         (
             Circuit {
                 wires: self.wires,
                 gates: self.gates,
+                x_ids,
+                y_ids,
+                z_ids,
             },
-            self.wire_state,
+            self.x,
+            self.y,
         )
     }
 }
 
-fn parse_file(path: String) -> Result<(Circuit, WireState), Box<dyn Error>> {
+fn parse_file(path: String) -> Result<(Circuit, u64, u64), Box<dyn Error>> {
     let wire_re = Regex::new(r"(.*): (\d)")?;
     let comp_re = Regex::new(r"(\w+) (\w+) (\w+) -> (\w+)")?;
     let mut builder = CircuitBuilder::new();
