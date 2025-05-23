@@ -32,6 +32,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (output, _state) = circuit.run(x, y);
     println!("Output: {}", output);
 
+    // Part 2:
+    for order in 0..circuit.x_ids.len() {
+        let value = 1u64 << order;
+        let (o1, _) = circuit.run(value, 0);
+        let (o2, _) = circuit.run(value, value);
+        if o1 != value {
+            println!("{} :: {} + 0 = {}", order, value, o1);
+        }
+        if o2 != value + value {
+            println!("{} :: {} + {} = {}", order, value, value, o2);
+        }
+    }
     Ok(())
 }
 
