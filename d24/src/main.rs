@@ -56,8 +56,40 @@ impl CircuitState {
         }
     }
 
-    fn get_wire(&self, id: WireId) -> Option<u8> {
-        self.wires[id.0]
+    fn get<T: CircuitId>(&self, id: &T) -> Option<u8> {
+        if id.is_wire() {
+            self.wires[id.id()]
+        } else {
+            self.gates[id.id()]
+        }
+    }
+
+    fn set<T: CircuitId>(&mut self, id: &T, value: u8) {
+        if id.is_wire() {
+            self.wires[id.id()] = Some(value);
+        } else {
+            self.gates[id.id()] = Some(value);
+        }
+    }
+
+    fn get_wires(&self, ids: &Vec<WireId>) -> Option<u64> {
+        let mut value = 0;
+
+        for (order, id) in ids.iter().enumerate() {
+            if let Some(b) = self.get(id) {
+                value += (b as u64 & 0x1) << order;
+            } else {
+                return None;
+            }
+        }
+
+        Some(value)
+    }
+
+    fn set_wires(&mut self, ids: &Vec<WireId>, value: u64) {
+        for (order, id) in ids.iter().enumerate() {
+            self.set(id, ((value >> order) & 0x1) as u8);
+        }
     }
 }
 
@@ -66,60 +98,71 @@ type WireSet = HashSet<WireId>;
 
 impl Circuit {
     fn run(&self, x: u64, y: u64) -> (u64, CircuitState) {
-        let mut wire_set = self.initial_wire_set(state);
+        let mut state = CircuitState::new(self.wires.len(), self.gates.len());
+        state.set_wires(&self.x_ids, x);
+        state.set_wires(&self.y_ids, y);
+
+        let mut wire_set = WireSet::new();
+        wire_set.extend(self.x_ids.iter().map(|&x| x));
+        wire_set.extend(self.y_ids.iter().map(|&y| y));
+
         let mut gate_set = GateSet::new();
 
         while !wire_set.is_empty() {
             self.update_gate_set(&mut gate_set, &wire_set);
-            let mut changes = HashSet::new();
-            for gate_id in &gate_set {
-                let gate = &self.gates[gate_id.0];
-                if let Some(v) = gate.run(state) {
-                    state[gate.out.0] = Some(v);
-                    changes.insert(gate.out);
-                }
-            }
-            wire_set = changes;
+            self.run_gates(&gate_set, &mut state, &mut wire_set);
         }
-    }
 
-    fn output(&self, wire_state: &WireState) -> u64 {
-        let mut z_wires: Vec<_> = self
-            .wires
-            .iter()
-            .enumerate()
-            .filter(|(_, wire)| wire.name.starts_with("z"))
-            .collect();
-        z_wires.sort_by_key(|(_, wire)| &wire.name);
-
-        z_wires
-            .into_iter()
-            .map(|(idx, _)| wire_state[idx])
-            .enumerate()
-            .filter_map(|(order, value)| value.map(|v| v as u64 * 2u64.pow(order as u32)))
-            .sum()
-    }
-
-    fn initial_wire_set(&self, state: &WireState) -> WireSet {
-        state
-            .iter()
-            .enumerate()
-            .take_while(|(_, s)| s.is_some())
-            .map(|(idx, _)| WireId(idx))
-            .collect()
+        (state.get_wires(&self.z_ids).unwrap(), state)
     }
 
     fn update_gate_set(&self, gate_set: &mut GateSet, wire_set: &WireSet) {
         gate_set.clear();
-        gate_set.extend(wire_set.iter().flat_map(|&wire| &self.wires[wire.0].out));
+        gate_set.extend(wire_set.iter().flat_map(|&wire| &self.wires[wire.0].output));
+    }
+
+    fn run_gates(&self, gate_set: &GateSet, state: &mut CircuitState, wire_set: &mut WireSet) {
+        wire_set.clear();
+        for gate_id in gate_set {
+            let gate = &self.gates[gate_id.0];
+            if let Some(v) = gate.run(state) {
+                state.set(&gate.output, v);
+                state.set(gate_id, v);
+                wire_set.insert(gate.output);
+            }
+        }
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Hash)]
+trait CircuitId {
+    fn is_wire(&self) -> bool;
+    fn id(&self) -> usize;
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 struct WireId(usize);
 
+impl CircuitId for WireId {
+    fn is_wire(&self) -> bool {
+        true
+    }
+
+    fn id(&self) -> usize {
+        self.0
+    }
+}
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 struct GateId(usize);
+
+impl CircuitId for GateId {
+    fn is_wire(&self) -> bool {
+        false
+    }
+
+    fn id(&self) -> usize {
+        self.0
+    }
+}
 
 enum GateOp {
     And,
@@ -135,7 +178,7 @@ struct Gate {
 
 impl Gate {
     fn run(&self, state: &CircuitState) -> Option<u8> {
-        let [a, b] = self.input.map(|id| wire_state[id.0]);
+        let [a, b] = self.input.map(|id| state.get(&id));
         match (a, b) {
             (Some(a), Some(b)) => Some(match self.op {
                 GateOp::And => a & b,
